@@ -246,7 +246,7 @@ options:
       - A list of existing network interfaces to attach to the instance at launch. When specifying existing network interfaces, none of the assign_public_ip, private_ip, vpc_subnet_id, group, or group_id parameters may be used. (Those parameters are for creating a new network interface at launch.)
     required: false
     default: null
-    aliases: []
+    aliases: ['network_interface']
 
 author:
     - "Tim Gerla (@tgerla)"
@@ -358,6 +358,19 @@ EXAMPLES = '''
     wait: yes
     vpc_subnet_id: subnet-29e63245
     assign_public_ip: yes
+
+# Examples using pre-existing network interfaces
+- ec2:
+    key_name: mykey
+    instance_type: t2.small
+    image: ami-f005ba11
+    network_interface: eni-deadbeef
+
+- ec2:
+    key_name: mykey
+    instance_type: t2.small
+    image: ami-f005ba11
+    network_interfaces: ['eni-deadbeef', 'eni-5ca1ab1e']
 
 # Launch instances, runs some tasks
 # and then terminate them
@@ -839,15 +852,6 @@ def create_instances(module, ec2, vpc, override_count=None):
     if group_id and group_name:
         module.fail_json(msg = str("Use only one type of parameter (group_name) or (group_id)"))
 
-    if (network_interfaces and
-            (assign_public_ip or private_ip or vpc_subnet_id
-                or group_name or group_id)):
-        module.fail_json(
-            msg=str("network_interfaces must not be set when specifying " +
-                    "assign_public_ip, private_ip, vpc_subnet_id, group, " +
-                    "or group_id, which are used to create a new network " +
-                    "interface."))
-
     vpc_id = None
     if vpc_subnet_id:
         if not vpc:
@@ -944,6 +948,8 @@ def create_instances(module, ec2, vpc, override_count=None):
                     params['network_interfaces'] = interfaces
             else:
                 if network_interfaces:
+                    if isinstance(network_interfaces, basestring):
+                        network_interfaces = [network_interfaces]
                     interfaces = []
                     for i, network_interface_id in enumerate(network_interfaces):
                         interface = boto.ec2.networkinterface.NetworkInterfaceSpecification(
@@ -1311,7 +1317,7 @@ def main():
             volumes = dict(type='list'),
             ebs_optimized = dict(type='bool', default=False),
             tenancy = dict(default='default'),
-            network_interfaces = dict(type='list')
+            network_interfaces = dict(type='list', aliases=['network_interface'])
         )
     )
 
@@ -1320,7 +1326,12 @@ def main():
         mutually_exclusive = [
                                 ['exact_count', 'count'],
                                 ['exact_count', 'state'],
-                                ['exact_count', 'instance_ids']
+                                ['exact_count', 'instance_ids'],
+                                ['network_interfaces', 'assign_public_ip'],
+                                ['network_interfaces', 'group'],
+                                ['network_interfaces', 'group_id'],
+                                ['network_interfaces', 'private_ip'],
+                                ['network_interfaces', 'vpc_subnet_id'],
                              ],
     )
 
