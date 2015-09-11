@@ -137,7 +137,7 @@ options:
         - Boot instance from a volume
      required: false
      default: None
-     terminate_volume:
+   terminate_volume:
      description:
         - If true, delete volume when deleting instance (if booted from volume)
      default: false
@@ -262,6 +262,15 @@ def _network_args(module, cloud):
                     msg='Could not find network by net-name: %s' %
                     net['net-name'])
             args.append({'net-id': by_name['id']})
+        elif net.get('port-id'):
+            args.append(net)
+        elif net.get('port-name'):
+            by_name = cloud.get_port(net['port-name'])
+            if not by_name:
+                module.fail_json(
+                    msg='Could not find port by port-name: %s' %
+                    net['port-name'])
+            args.append({'port-id': by_name['id']})
     return args
 
 
@@ -287,8 +296,12 @@ def _create_server(module, cloud):
 
     if flavor:
         flavor_dict = cloud.get_flavor(flavor)
+        if not flavor_dict:
+            module.fail_json(msg="Could not find flavor %s" % flavor) 
     else:
         flavor_dict = cloud.get_flavor_by_ram(flavor_ram, flavor_include)
+        if not flavor_dict:
+            module.fail_json(msg="Could not find any matching flavor") 
 
     nics = _network_args(module, cloud)
 

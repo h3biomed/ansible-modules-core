@@ -81,7 +81,7 @@ options:
       - 'If a checksum is passed to this parameter, the digest of the
         destination file will be calculated after it is downloaded to ensure
         its integrity and verify that the transfer completed successfully.
-        Format: <algorithm>:<checksum>, e.g.: checksum="sha256:d98291acbedd510e3dbd36dbfdd83cbca8415220af43b327c0a0c574b6dc7b97"
+        Format: <algorithm>:<checksum>, e.g.: checksum="sha256:D98291AC[...]B6DC7B97"
         If you worry about portability, only the sha1 algorithm is available 
         on all platforms and python versions.  The third party hashlib 
         library can be installed for access to additional algorithms.'
@@ -153,7 +153,7 @@ EXAMPLES='''
   get_url: url=http://example.com/path/file.conf dest=/etc/foo.conf force_basic_auth=yes
 
 - name: download file with custom HTTP headers
-  get_url: url=http://example.com/path/file.conf dest=/etc/foo.conf headers: 'key:value,key:value'
+  get_url: url=http://example.com/path/file.conf dest=/etc/foo.conf headers='key:value,key:value'
 
 - name: download file with check
   get_url: url=http://example.com/path/file.conf dest=/etc/foo.conf checksum=sha256:b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c
