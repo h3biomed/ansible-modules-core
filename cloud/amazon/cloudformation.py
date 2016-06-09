@@ -241,13 +241,13 @@ def main():
             stack_name=dict(required=True),
             template_parameters=dict(required=False, type='dict', default={}),
             state=dict(default='present', choices=['present', 'absent']),
-            template=dict(default=None, required=False),
+            template=dict(default=None, required=False, type='path'),
             notification_arns=dict(default=None, required=False),
             stack_policy=dict(default=None, required=False),
             disable_rollback=dict(default=False, type='bool'),
             template_url=dict(default=None, required=False),
             template_format=dict(default='json', choices=['json', 'yaml'], required=False),
-            tags=dict(default=None)
+            tags=dict(default=None, type='dict')
         )
     )
 
@@ -257,9 +257,6 @@ def main():
     )
     if not HAS_BOTO:
         module.fail_json(msg='boto required for this module')
-
-    if module.params['template'] is None and module.params['template_url'] is None:
-        module.fail_json(msg='Either template or template_url expected')
 
     state = module.params['state']
     stack_name = module.params['stack_name']
@@ -305,10 +302,7 @@ def main():
     stack_outputs = {}
 
     try:
-        cfn = boto.cloudformation.connect_to_region(
-                  region,
-                  **aws_connect_kwargs
-              )
+        cfn = connect_to_aws(boto.cloudformation, region, **aws_connect_kwargs)
     except boto.exception.NoAuthHandlerFound, e:
         module.fail_json(msg=str(e))
     update = False
@@ -368,6 +362,16 @@ def main():
         for output in stack.outputs:
             stack_outputs[output.key] = output.value
         result['stack_outputs'] = stack_outputs
+        stack_resources = [] 
+        for res in cfn.list_stack_resources(stack_name):
+            stack_resources.append({
+                "last_updated_time": res.last_updated_time,
+                "logical_resource_id": res.logical_resource_id,
+                "physical_resource_id": res.physical_resource_id,
+                "status": res.resource_status,
+                "status_reason": res.resource_status_reason,
+                "resource_type": res.resource_type })
+        result['stack_resources'] = stack_resources
 
     # absent state is different because of the way delete_stack works.
     # problem is it it doesn't give an error if stack isn't found
@@ -393,4 +397,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.ec2 import *
 
-main()
+if __name__ == '__main__':
+    main()

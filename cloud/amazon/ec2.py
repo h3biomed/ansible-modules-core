@@ -216,7 +216,7 @@ options:
   volumes:
     version_added: "1.5"
     description:
-      - "a list of volume dicts, each containing device name and optionally ephemeral id or snapshot id. Size and type (and number of iops for io device type) must be specified for a new volume or a root volume, and may be passed for a snapshot volume. For any volume, a volume size less than 1 will be interpreted as a request not to create the volume. Encrypt the volume by passing 'encrypted: true' in the volume dict."
+      - a list of hash/dictionaries of volumes to add to the new instance; '[{"key":"value", "key":"value"}]'; keys allowed are - device_name (str; required), delete_on_termination (bool; False), device_type (deprecated), ephemeral (str), encrypted (bool; False), snapshot (str), volume_type (str), iops (int) - device_type is deprecated use volume_type, iops must be set when volume_type='io1', ephemeral and snapshot are mutually exclusive.
     required: false
     default: null
     aliases: []
@@ -225,7 +225,7 @@ options:
     description:
       - whether instance is using optimized EBS volumes, see U(http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSOptimized.html)
     required: false
-    default: false
+    default: 'false'
   exact_count:
     version_added: "1.5"
     description:
@@ -236,7 +236,7 @@ options:
   count_tag:
     version_added: "1.5"
     description:
-      - Used with 'exact_count' to determine how many nodes based on a specific tag criteria should be running.  This can be expressed in multiple ways and is shown in the EXAMPLES section.  For instance, one can request 25 servers that are tagged with "class=webserver".
+      - Used with 'exact_count' to determine how many nodes based on a specific tag criteria should be running.  This can be expressed in multiple ways and is shown in the EXAMPLES section.  For instance, one can request 25 servers that are tagged with "class=webserver". The specified tag must already exist or be passed in as the 'instance_tags' option.
     required: false
     default: null
     aliases: []
@@ -247,6 +247,12 @@ options:
     required: false
     default: null
     aliases: ['network_interface']
+  spot_launch_group:
+    version_added: "2.1"
+    description:
+      - Launch group for spot request, see U(http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/how-spot-instances-work.html#spot-launch-group)
+    required: false
+    default: null
 
 author:
     - "Tim Gerla (@tgerla)"
@@ -295,13 +301,29 @@ EXAMPLES = '''
     volumes:
       - device_name: /dev/sdb
         snapshot: snap-abcdef12
-        device_type: io1
+        volume_type: io1
         iops: 1000
         volume_size: 100
         delete_on_termination: true
     monitoring: yes
     vpc_subnet_id: subnet-29e63245
     assign_public_ip: yes
+
+# Single instance with ssd gp2 root volume
+- ec2:
+    key_name: mykey
+    group: webserver
+    instance_type: c3.medium
+    image: ami-123456
+    wait: yes
+    wait_timeout: 500
+    volumes:
+      - device_name: /dev/xvda
+        volume_type: gp2
+        volume_size: 8
+    vpc_subnet_id: subnet-29e63245
+    assign_public_ip: yes
+    exact_count: 1
 
 # Multiple groups example
 - ec2:
@@ -358,6 +380,7 @@ EXAMPLES = '''
     wait: yes
     vpc_subnet_id: subnet-29e63245
     assign_public_ip: yes
+    spot_launch_group: report_generators
 
 # Examples using pre-existing network interfaces
 - ec2:
@@ -405,7 +428,7 @@ EXAMPLES = '''
 
 - name: Configure instance(s)
   hosts: launched
-  sudo: True
+  become: True
   gather_facts: True
   roles:
     - my_awesome_role
@@ -442,7 +465,7 @@ EXAMPLES = '''
         wait: True
         vpc_subnet_id: subnet-29e63245
         assign_public_ip: yes
-  role:
+  roles:
     - do_neat_stuff
     - do_more_neat_stuff
 
@@ -710,11 +733,21 @@ def create_block_device(module, ec2, volume):
     # Not aware of a way to determine this programatically
     # http://aws.amazon.com/about-aws/whats-new/2013/10/09/ebs-provisioned-iops-maximum-iops-gb-ratio-increased-to-30-1/
     MAX_IOPS_TO_SIZE_RATIO = 30
+
+    # device_type has been used historically to represent volume_type, 
+    # however ec2_vol uses volume_type, as does the BlockDeviceType, so 
+    # we add handling for either/or but not both
+    if all(key in volume for key in ['device_type','volume_type']):
+        module.fail_json(msg = 'device_type is a deprecated name for volume_type. Do not use both device_type and volume_type')
+
+    # get whichever one is set, or NoneType if neither are set
+    volume_type = volume.get('device_type') or volume.get('volume_type')
+
     if 'snapshot' not in volume and 'ephemeral' not in volume:
         if 'volume_size' not in volume:
             module.fail_json(msg = 'Size must be specified when creating a new volume or modifying the root volume')
     if 'snapshot' in volume:
-        if 'device_type' in volume and volume.get('device_type') == 'io1' and 'iops' not in volume:
+        if volume_type == 'io1' and 'iops' not in volume:
             module.fail_json(msg = 'io1 volumes must have an iops value set')
         if 'iops' in volume:
             snapshot = ec2.get_all_snapshots(snapshot_ids=[volume['snapshot']])[0]
@@ -729,10 +762,11 @@ def create_block_device(module, ec2, volume):
     return BlockDeviceType(snapshot_id=volume.get('snapshot'),
                            ephemeral_name=volume.get('ephemeral'),
                            size=volume.get('volume_size'),
-                           volume_type=volume.get('device_type'),
+                           volume_type=volume_type,
                            delete_on_termination=volume.get('delete_on_termination', False),
                            iops=volume.get('iops'),
                            encrypted=volume.get('encrypted', None))
+
 def boto_supports_param_in_spot_request(ec2, param):
     """
     Check if Boto library has a <param> in its request_spot_instances() method. For example, the placement_group parameter wasn't added until 2.3.0.
@@ -847,6 +881,7 @@ def create_instances(module, ec2, vpc, override_count=None):
     source_dest_check = module.boolean(module.params.get('source_dest_check'))
     termination_protection = module.boolean(module.params.get('termination_protection'))
     network_interfaces = module.params.get('network_interfaces')
+    spot_launch_group = module.params.get('spot_launch_group')
 
     # group_id and group_name are exclusive of each other
     if group_id and group_name:
@@ -870,6 +905,9 @@ def create_instances(module, ec2, vpc, override_count=None):
                 grp_details = ec2.get_all_security_groups()
             if isinstance(group_name, basestring):
                 group_name = [group_name]
+            unmatched = set(group_name).difference(str(grp.name) for grp in grp_details)
+            if len(unmatched) > 0:
+                module.fail_json(msg="The following group names are not valid: %s" % ', '.join(unmatched))
             group_id = [ str(grp.id) for grp in grp_details if str(grp.name) in group_name ]
         # Now we try to lookup the group id testing if group exists.
         elif group_id:
@@ -1028,6 +1066,9 @@ def create_instances(module, ec2, vpc, override_count=None):
                 elif placement_group :
                         module.fail_json(
                             msg="placement_group parameter requires Boto version 2.3.0 or higher.")
+
+                if spot_launch_group and isinstance(spot_launch_group, basestring):
+                    params['launch_group'] = spot_launch_group
 
                 params.update(dict(
                     count = count_remaining,
@@ -1215,8 +1256,12 @@ def startstop_instances(module, ec2, instance_ids, state, instance_tags):
 
     wait = module.params.get('wait')
     wait_timeout = int(module.params.get('wait_timeout'))
+    source_dest_check = module.params.get('source_dest_check')
+    termination_protection = module.params.get('termination_protection')
     changed = False
     instance_dict_array = []
+    source_dest_check = module.params.get('source_dest_check')
+    termination_protection = module.params.get('termination_protection')
 
     if not isinstance(instance_ids, list) or len(instance_ids) < 1:
         # Fail unless the user defined instance tags
@@ -1293,6 +1338,7 @@ def main():
             instance_type = dict(aliases=['type']),
             spot_price = dict(),
             spot_type = dict(default='one-time', choices=["one-time", "persistent"]),
+            spot_launch_group = dict(),
             image = dict(),
             kernel = dict(),
             count = dict(type='int', default='1'),
@@ -1344,7 +1390,7 @@ def main():
 
     if region:
         try:
-            vpc = boto.vpc.connect_to_region(region, **aws_connect_kwargs)
+            vpc = connect_to_aws(boto.vpc, region, **aws_connect_kwargs)
         except boto.exception.NoAuthHandlerFound, e:
             module.fail_json(msg = str(e))
     else:

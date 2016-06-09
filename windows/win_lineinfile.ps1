@@ -96,7 +96,8 @@ function WriteLines($outlines, $dest, $linesep, $encodingobj, $validate) {
 	
 	# Commit changes to the destination file
 	$cleandest = $dest.Replace("/", "\");
-	Move-Item $temppath $cleandest -force;	
+	Copy-Item $temppath $cleandest -force;	
+	Remove-Item $temppath -force;
 }
 
 
@@ -387,8 +388,11 @@ Elseif (Test-Path $dest) {
 	$found = $FALSE;
 	Foreach ($encoding in $sortedlist.GetValueList()) {
 		$preamble = $encoding.GetPreamble();
-		If ($preamble) {
-			Foreach ($i in 0..$preamble.Length) {
+		If ($preamble -and $bom) {
+			Foreach ($i in 0..($preamble.Length - 1)) {
+				If ($i -ge $bom.Length) {
+					break;
+				}
 				If ($preamble[$i] -ne $bom[$i]) {
 					break;
 				}
@@ -427,7 +431,7 @@ If ($state -eq "present") {
 }
 Else {
 
-	If ($regex -eq $FALSE -and $line -eq $FALSE) {
+	If ($regexp -eq $FALSE -and $line -eq $FALSE) {
 		Fail-Json (New-Object psobject) "one of line= or regexp= is required with state=absent";
 	}
 	

@@ -98,11 +98,11 @@ EXAMPLES = '''
 def main():
     arg_spec = dict(
         name=dict(required=True),
-        config=dict(required=False),
+        config=dict(required=False, type='path'),
         server_url=dict(required=False),
         username=dict(required=False),
         password=dict(required=False),
-        supervisorctl_path=dict(required=False),
+        supervisorctl_path=dict(required=False, type='path'),
         state=dict(required=True, choices=['present', 'started', 'restarted', 'stopped', 'absent'])
     )
 
@@ -120,9 +120,11 @@ def main():
     password = module.params.get('password')
     supervisorctl_path = module.params.get('supervisorctl_path')
 
+    # we check error message for a pattern, so we need to make sure that's in C locale
+    module.run_command_environ_update = dict(LANG='C', LC_ALL='C', LC_MESSAGES='C', LC_CTYPE='C')
+
     if supervisorctl_path:
-        supervisorctl_path = os.path.expanduser(supervisorctl_path)
-        if os.path.exists(supervisorctl_path) and module.is_executable(supervisorctl_path):
+        if os.path.exists(supervisorctl_path) and is_executable(supervisorctl_path):
             supervisorctl_args = [supervisorctl_path]
         else:
             module.fail_json(
@@ -131,7 +133,7 @@ def main():
         supervisorctl_args = [module.get_bin_path('supervisorctl', True)]
 
     if config:
-        supervisorctl_args.extend(['-c', os.path.expanduser(config)])
+        supervisorctl_args.extend(['-c', config])
     if server_url:
         supervisorctl_args.extend(['-s', server_url])
     if username:
@@ -239,5 +241,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-
-main()
+# is_executable from basic
+if __name__ == '__main__':
+    main()

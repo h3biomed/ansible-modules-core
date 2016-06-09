@@ -28,12 +28,13 @@ except ImportError:
 
 DOCUMENTATION = '''
 ---
-module: quantum_router
+module: quantum_router_interface
 version_added: "1.2"
 author: "Benno Joy (@bennojoy)"
-short_description: Create or Remove router from openstack
+deprecated: Deprecated in 2.0. Use os_router instead
+short_description: Attach/Dettach a subnet's interface to a router
 description:
-   - Create or Delete routers from OpenStack
+   - Attach/Dettach a subnet interface to a router, to provide a gateway for the subnet.
 options:
    login_username:
      description:
@@ -52,7 +53,7 @@ options:
      default: 'yes'
    auth_url:
      description:
-        - The keystone url for authentication
+        - The keystone URL for authentication
      required: false
      default: 'http://127.0.0.1:35357/v2.0/'
    region_name:
@@ -65,21 +66,21 @@ options:
         - Indicate desired state of the resource
      choices: ['present', 'absent']
      default: present
-   name:
+   router_name:
      description:
-        - Name to be give to the router
+        - Name of the router to which the subnet's interface should be attached.
+     required: true
+     default: None
+   subnet_name:
+     description:
+        - Name of the subnet to whose interface should be attached to the router.
      required: true
      default: None
    tenant_name:
      description:
-        - Name of the tenant for which the router has to be created, if none router would be created for the login tenant.
+        - Name of the tenant whose subnet has to be attached.
      required: false
      default: None
-   admin_state_up:
-     description:
-        - desired admin state of the created router .
-     required: false
-     default: true
 requirements:
     - "python >= 2.6"
     - "python-neutronclient or python-quantumclient"
@@ -87,13 +88,15 @@ requirements:
 '''
 
 EXAMPLES = '''
-# Creates a router for tenant admin
-- quantum_router: state=present
-                login_username=admin
-                login_password=admin
-                login_tenant_name=admin
-                name=router1"
+# Attach tenant1's subnet to the external router
+- quantum_router_interface: state=present login_username=admin
+                            login_password=admin
+                            login_tenant_name=admin
+                            tenant_name=tenant1
+                            router_name=external_route
+                            subnet_name=t1subnet
 '''
+
 
 _os_keystone = None
 _os_tenant_id = None
@@ -135,22 +138,20 @@ def _get_neutron_client(module, kwargs):
 def _set_tenant_id(module):
     global _os_tenant_id
     if not module.params['tenant_name']:
-        login_tenant_name = module.params['login_tenant_name']
+        _os_tenant_id = _os_keystone.tenant_id
     else:
-        login_tenant_name = module.params['tenant_name']
+        tenant_name = module.params['tenant_name']
 
-    for tenant in _os_keystone.tenants.list():
-        if tenant.name == login_tenant_name:
-            _os_tenant_id = tenant.id
-            break
+        for tenant in _os_keystone.tenants.list():
+            if tenant.name == tenant_name:
+                _os_tenant_id = tenant.id
+                break
     if not _os_tenant_id:
-            module.fail_json(msg = "The tenant id cannot be found, please check the parameters")
-
+        module.fail_json(msg = "The tenant id cannot be found, please check the parameters")
 
 def _get_router_id(module, neutron):
     kwargs = {
-            'name': module.params['name'],
-            'tenant_id': _os_tenant_id,
+        'name': module.params['router_name'],
     }
     try:
         routers = neutron.list_routers(**kwargs)
@@ -160,32 +161,65 @@ def _get_router_id(module, neutron):
         return None
     return routers['routers'][0]['id']
 
-def _create_router(module, neutron):
-    router = {
-            'name': module.params['name'],
+
+def _get_subnet_id(module, neutron):
+    subnet_id = None
+    kwargs = {
             'tenant_id': _os_tenant_id,
-            'admin_state_up': module.params['admin_state_up'],
+            'name': module.params['subnet_name'],
     }
     try:
-        new_router = neutron.create_router(dict(router=router))
+        subnets = neutron.list_subnets(**kwargs)
     except Exception, e:
-        module.fail_json( msg = "Error in creating router: %s" % e.message)
-    return new_router['router']['id']
+        module.fail_json( msg = " Error in getting the subnet list:%s " % e.message)
+    if not subnets['subnets']:
+        return None
+    return subnets['subnets'][0]['id']
 
-def _delete_router(module, neutron, router_id):
+def _get_port_id(neutron, module, router_id, subnet_id):
+    kwargs = {
+            'tenant_id': _os_tenant_id,
+            'device_id': router_id,
+    }
     try:
-        neutron.delete_router(router_id)
-    except:
-        module.fail_json("Error in deleting the router")
+        ports = neutron.list_ports(**kwargs)
+    except Exception, e:
+        module.fail_json( msg = "Error in listing ports: %s" % e.message)
+    if not ports['ports']:
+        return None
+    for port in  ports['ports']:
+        for subnet in port['fixed_ips']:
+            if subnet['subnet_id'] == subnet_id:
+                return port['id']
+    return None
+
+def _add_interface_router(neutron, module, router_id, subnet_id):
+    kwargs = {
+        'subnet_id': subnet_id
+    }
+    try:
+        neutron.add_interface_router(router_id, kwargs)
+    except Exception, e:
+        module.fail_json(msg = "Error in adding interface to router: %s" % e.message)
+    return True
+
+def  _remove_interface_router(neutron, module, router_id, subnet_id):
+    kwargs = {
+        'subnet_id': subnet_id
+    }
+    try:
+        neutron.remove_interface_router(router_id, kwargs)
+    except Exception, e:
+        module.fail_json(msg="Error in removing interface from router: %s" % e.message)
     return True
 
 def main():
     argument_spec = openstack_argument_spec()
     argument_spec.update(dict(
-        name                            = dict(required=True),
-        tenant_name                     = dict(default=None),
-        state                           = dict(default='present', choices=['absent', 'present']),
-        admin_state_up                  = dict(type='bool', default=True),
+            router_name                     = dict(required=True),
+            subnet_name                     = dict(required=True),
+            tenant_name                     = dict(default=None),
+            state                           = dict(default='present', choices=['absent', 'present']),
     ))
     module = AnsibleModule(argument_spec=argument_spec)
     if not HAVE_DEPS:
@@ -194,21 +228,27 @@ def main():
     neutron = _get_neutron_client(module, module.params)
     _set_tenant_id(module)
 
-    if module.params['state'] == 'present':
-        router_id = _get_router_id(module, neutron)
-        if not router_id:
-            router_id = _create_router(module, neutron)
-            module.exit_json(changed=True, result="Created", id=router_id)
-        else:
-            module.exit_json(changed=False, result="success" , id=router_id)
+    router_id = _get_router_id(module, neutron)
+    if not router_id:
+        module.fail_json(msg="failed to get the router id, please check the router name")
 
-    else:
-        router_id = _get_router_id(module, neutron)
-        if not router_id:
-            module.exit_json(changed=False, result="success")
-        else:
-            _delete_router(module, neutron, router_id)
-            module.exit_json(changed=True, result="deleted")
+    subnet_id = _get_subnet_id(module, neutron)
+    if not subnet_id:
+        module.fail_json(msg="failed to get the subnet id, please check the subnet name")
+
+    if module.params['state'] == 'present':
+        port_id = _get_port_id(neutron, module, router_id, subnet_id)
+        if not port_id:
+            _add_interface_router(neutron, module, router_id, subnet_id)
+            module.exit_json(changed=True, result="created", id=port_id)
+        module.exit_json(changed=False, result="success", id=port_id)
+
+    if module.params['state'] == 'absent':
+        port_id = _get_port_id(neutron, module, router_id, subnet_id)
+        if not port_id:
+            module.exit_json(changed = False, result = "Success")
+        _remove_interface_router(neutron, module, router_id, subnet_id)
+        module.exit_json(changed=True, result="Deleted")
 
 # this is magic, see lib/ansible/module.params['common.py
 from ansible.module_utils.basic import *

@@ -238,7 +238,7 @@ EXAMPLES = '''
       key_name: test
       wait_for: 200
       flavor_id: 101
-      floating-ips:
+      floating_ips:
         - 12.34.56.79
 
 # Creates a new VM with 4G of RAM on Ubuntu Trusty, ignoring deprecated images
@@ -324,7 +324,7 @@ def _add_floating_ip_from_pool(module, nova, server):
         # loop through all floating IPs
         for f_ip in all_floating_ips:
             # if not reserved and the correct pool, add
-            if f_ip.instance_id is None and (f_ip.pool == pool):
+            if f_ip.fixed_ip is None and (f_ip.pool == pool):
                 pool_ips.append(f_ip.ip)
                 # only need one
                 break

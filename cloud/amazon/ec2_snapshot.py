@@ -22,11 +22,6 @@ description:
     - creates an EC2 snapshot from an existing EBS volume
 version_added: "1.5"
 options:
-  region:
-    description:
-      - The AWS region to use. If not specified then the value of the EC2_REGION environment variable, if any, is used.
-    required: false
-    aliases: ['aws_region', 'ec2_region']
   volume_id:
     description:
       - volume from which to take the snapshot
@@ -79,10 +74,12 @@ options:
       - If the volume's most recent snapshot has started less than `last_snapshot_min_age' minutes ago, a new snapshot will not be created.
     required: false
     default: 0
-    version_added: "1.9"
+    version_added: "2.0"
 
 author: "Will Thames (@willthames)"
-extends_documentation_fragment: aws
+extends_documentation_fragment:
+    - aws
+    - ec2
 '''
 
 EXAMPLES = '''
@@ -148,7 +145,7 @@ def _get_most_recent_snapshot(snapshots, max_snapshot_age_secs=None, now=None):
     if not now:
         now = datetime.datetime.utcnow()
 
-    youngest_snapshot = min(snapshots, key=_get_snapshot_starttime)
+    youngest_snapshot = max(snapshots, key=_get_snapshot_starttime)
 
     # See if the snapshot is younger that the given max age
     snapshot_start = datetime.datetime.strptime(youngest_snapshot.start_time, '%Y-%m-%dT%H:%M:%S.000Z')
