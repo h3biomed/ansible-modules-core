@@ -328,7 +328,7 @@ def main():
     ami_tags = module.params.get('ami_tags')
     architecture = module.params.get('architecture')
     hypervisor = module.params.get('hypervisor')
-    is_public = module.params.get('is_public')
+    is_public = module.boolean(module.params.get('is_public'))
     name = module.params.get('name')
     owner = module.params.get('owner')
     platform = module.params.get('platform')
@@ -352,8 +352,8 @@ def main():
         filter['architecture'] = architecture
     if hypervisor:
         filter['hypervisor'] = hypervisor
-    if is_public:
-        filter['is_public'] = is_public
+    if is_public != None:
+        filter['is_public'] = str(is_public).lower()
     if name:
         filter['name'] = name
     if platform:
