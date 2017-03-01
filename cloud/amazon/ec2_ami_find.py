@@ -356,6 +356,11 @@ def main():
         filter['is_public'] = 'true'
     if name:
         filter['name'] = name
+    if owner:
+        if owner.isdigit():
+            filter['owner-id'] = owner
+        else:
+            filter['owner-alias'] = owner
     if platform:
         filter['platform'] = platform
     if virtualization_type:
@@ -363,7 +368,7 @@ def main():
 
     ec2 = ec2_connect(module)
 
-    images_result = ec2.get_all_images(owners=owner, filters=filter)
+    images_result = ec2.get_all_images(filters=filter)
 
     if no_result_action == 'fail' and len(images_result) == 0:
         module.fail_json(msg="No AMIs matched the attributes: %s" % json.dumps(filter))
